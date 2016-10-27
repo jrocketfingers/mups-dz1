@@ -7,3 +7,5 @@ quad:
 
 clean:
 	rm -f quad
+
+.PHONY: quad

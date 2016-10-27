@@ -40,13 +40,30 @@ int main ( int argc, char *argv[] ) {
   
   wtime = omp_get_wtime ( );
 
+  int n_threads;
+  int chunk;
+
+  int myid;
+  int start;
+  int end;
+
+#pragma omp parallel shared(n_threads, n, a, b, chunk) private(start, end, myid, x, i) reduction(+:total)
+{
   total = 0.0;
 
-  for ( i = 0; i < n; i++ )
+  n_threads = omp_get_num_threads();
+  chunk =  (n + n_threads - 1) / n_threads;
+
+  myid = omp_get_thread_num(); 
+  start = myid * chunk;
+  end = start + chunk < n ? start + chunk : n;
+
+  for ( i = start; i < end; i++ )
   {
     x = ( ( double ) ( n - i - 1 ) * a + ( double ) ( i ) * b ) / ( double ) ( n - 1 );
     total = total + f ( x );
   }
+}
 
   wtime = omp_get_wtime ( ) - wtime;
 
