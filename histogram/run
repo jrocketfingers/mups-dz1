@@ -1,0 +1,3 @@
+./histo -i data/img.bin 20 4
+./histo -i data/img.bin 10000 4
+./histo -i data/img.bin -o histo.bmp 10000 4
