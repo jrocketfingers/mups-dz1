@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <omp.h>
 
 #include "dump.h"
 #include "utils.h"
@@ -56,7 +57,7 @@ int main(int argc, char* argv[]) {
 
   unsigned int* img = (unsigned int*) malloc (img_width*img_height*sizeof(unsigned int));
 
-  unsigned char partial_histo[histo_width*histo_height];
+  unsigned char** partial_histo;
   unsigned char* histo = (unsigned char*) calloc (histo_width*histo_height, sizeof(unsigned char));
   
   pb_SwitchToSubTimer(&timers, "Input", pb_TimerID_IO);
@@ -72,29 +73,60 @@ int main(int argc, char* argv[]) {
 
   pb_SwitchToTimer(&timers, pb_TimerID_COMPUTE);
 
-  int iter;
-  for (iter = 0; iter < numIterations; iter++) {
-    memset(histo, 0, histo_height * histo_width * sizeof(unsigned char));
+  unsigned int min = -1;
+  unsigned int max = 0;
+  #pragma omp parallel for default(none) shared(img, img_width, img_height) reduction(min: min) reduction(max: max)
+  for(unsigned int i = 0; i < img_height * img_width; i++) {
+    if(min > img[i])
+      min = img[i];
 
-/*#pragma omp parallel default(none) shared(histo, img, img_width, img_height) \*/
-                                   /*private(partial_histo)*/
+    if(max < img[i])
+      max = img[i];
+  }
 
-    /*#pragma omp for*/
-    for (unsigned int i = 0; i < img_width * img_height; ++i) {
-      const unsigned int value = img[i];
+  printf("min: %d; max %d\n\n", min, max);
 
-      if (partial_histo[value] < UINT8_MAX) {
-        ++partial_histo[value];
+  memset(histo, 0, histo_height * histo_width * sizeof(unsigned char));
+
+
+  #pragma omp parallel default(none) shared(histo, partial_histo, histo_height, histo_width, img, img_width, img_height, min, max, numIterations)
+  {
+    unsigned int n_threads = omp_get_num_threads();
+    unsigned int thread_id = omp_get_thread_num();
+
+    #pragma omp single
+    partial_histo = malloc(n_threads * sizeof(unsigned char *));
+
+    int i;
+    #pragma omp for
+    for (i = 0; i < n_threads; i++) {
+      partial_histo[i] = malloc((max - min) * sizeof(unsigned char));
+    }
+
+    int iter;
+    for (iter = 0; iter < numIterations; iter++) {
+      memset(partial_histo[thread_id], 0, (max - min) * sizeof(unsigned char));
+
+      #pragma omp for
+      for (unsigned int i = min; i <= max; i++) {
+        const unsigned int value = img[i];
+
+        if (partial_histo[thread_id][value - min] < UINT8_MAX) {
+          ++partial_histo[thread_id][value - min];
+        }
       }
     }
 
-    /*#pragma omp critical*/
-    /*{*/
-      /*for(unsigned int i = 0; i < histo_height * histo_width; i++) {*/
-        /*histo[i] += partial_histo[i];*/
-      /*}*/
-    /*}*/
+    #pragma omp single
+    {
+      for(unsigned int thread = 0; thread < n_threads; thread++) {
+        for(unsigned int value = min; value <= max; value++) {
+          histo[value] = (histo[value] + partial_histo[thread][value - min]) < UINT8_MAX ? histo[value] + partial_histo[thread][value - min] : UINT8_MAX;
+        }
+      }
+    }
   }
+
 
   pb_SwitchToSubTimer(&timers, outputStr, pb_TimerID_IO);
 
