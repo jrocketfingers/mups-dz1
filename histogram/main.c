@@ -88,41 +88,49 @@ int main(int argc, char* argv[]) {
 
   memset(histo, 0, histo_height * histo_width * sizeof(unsigned char));
 
+  unsigned int n_threads;
 
-  #pragma omp parallel default(none) shared(histo, partial_histo, histo_height, histo_width, img, img_width, img_height, min, max, numIterations)
+  #pragma omp parallel default(none) shared(n_threads, partial_histo)
   {
-    unsigned int n_threads = omp_get_num_threads();
-    unsigned int thread_id = omp_get_thread_num();
-
     #pragma omp single
-    partial_histo = malloc(n_threads * sizeof(unsigned char *));
+    {
+      n_threads = omp_get_num_threads();
 
-    int i;
-    #pragma omp for
-    for (i = 0; i < n_threads; i++) {
-      partial_histo[i] = malloc((max - min) * sizeof(unsigned char));
+      partial_histo = malloc(n_threads * sizeof(unsigned char *));
     }
+  }
 
-    int iter;
-    for (iter = 0; iter < numIterations; iter++) {
-      memset(partial_histo[thread_id], 0, (max - min) * sizeof(unsigned char));
+  unsigned int i;
+  unsigned int thread_id;
+  #pragma omp parallel default(none) shared(max, min, partial_histo, n_threads)
+  {
+    partial_histo[omp_get_thread_num()] = malloc((max - min) * sizeof(unsigned char));
+  }
 
-      #pragma omp for
-      for (unsigned int i = min; i <= max; i++) {
+  int iter;
+  for (iter = 0; iter < numIterations; iter++) {
+    #pragma omp parallel default(none) shared(img, img_width, img_height, partial_histo, max, min) private(thread_id, i)
+    {
+      memset(partial_histo[omp_get_thread_num()], 0, (max - min) * sizeof(unsigned char));
+
+      #pragma omp for schedule(static)
+      for (i = 0; i < img_width * img_height; i++) {
         const unsigned int value = img[i];
 
-        if (partial_histo[thread_id][value - min] < UINT8_MAX) {
-          ++partial_histo[thread_id][value - min];
+        if (partial_histo[omp_get_thread_num()][value - min] < UINT8_MAX) {
+          ++partial_histo[omp_get_thread_num()][value - min];
         }
       }
     }
 
-    #pragma omp single
-    {
-      for(unsigned int thread = 0; thread < n_threads; thread++) {
-        for(unsigned int value = min; value <= max; value++) {
-          histo[value] = (histo[value] + partial_histo[thread][value - min]) < UINT8_MAX ? histo[value] + partial_histo[thread][value - min] : UINT8_MAX;
-        }
+    memset(histo, 0, histo_height * histo_width * sizeof(unsigned char));
+
+    for(unsigned int thread = 0; thread < n_threads; thread++) {
+      for(unsigned int value = min; value <= max; value++) {
+        if(histo[value] + partial_histo[thread][value - min] <= UINT8_MAX)
+          histo[value] += partial_histo[thread][value - min];
+        else
+          histo[value] = UINT8_MAX;
       }
     }
   }
